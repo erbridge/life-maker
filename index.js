@@ -243,17 +243,28 @@ getRepoInfo()
 
     const initialSig = NodeGit.Signature.create(name, email, 0, 0);
 
+    const executeCommit = function executeCommit(i) {
+      const sig = sigs[i];
+
+      return repository.createCommitOnHead([], sig, sig, message)
+        .then(function recurse() {
+          i++;
+
+          if (sigs.length > i) {
+            return executeCommit(i);
+          }
+
+          return Promise.resolve();
+        });
+    };
+
     return Promise.all([
       Promise.resolve(repository),
       repository.createCommit(
         'HEAD', initialSig, initialSig, 'Initial commit', tree, []
       )
         .then(function executeCommits() {
-          return Promise.all(sigs.map(function commit(sig) {
-            // FIXME: This needs to wait for the previous commit,
-            //        and pass it in as the parent. Or use createCommitOnHead?
-            return repository.createCommit('HEAD', sig, sig, message, tree, []);
-          }));
+          return executeCommit(0);
         }),
     ]);
   })
