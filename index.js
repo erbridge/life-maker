@@ -9,6 +9,27 @@ const octonode = require('octonode');
 const rimraf   = require('rimraf-promise');
 const winston  = require('winston');
 
+const createEmptyGrid = function createEmptyGrid() {
+  // FIXME: Ignore the incomplete weeks, so the world can wrap.
+  const columnCount = Math.ceil(365 / 7);
+
+  const grid = [];
+
+  while (grid.length < columnCount) {
+    grid.push([]);
+  }
+
+  return grid;
+};
+
+const forEachNode = function forEachNode(grid, eachFn) {
+  for (let x = 0; x < grid.length; x++) {
+    for (let y = 0; y < 7; y++) {
+      eachFn(grid[x][y], x, y);
+    }
+  }
+};
+
 const githubClient = octonode.client({
   username: config.get('github.username'),
   password: config.get('github.password'),
@@ -90,13 +111,7 @@ Promise.all([
     return Promise.resolve(counts);
   })
   .then(function createGrid(counts) {
-    const columnCount = Math.ceil(365 / 7);
-
-    const grid = [];
-
-    while (grid.length < columnCount) {
-      grid.push([]);
-    }
+    const grid = createEmptyGrid();
 
     const now = moment.utc();
 
@@ -110,13 +125,52 @@ Promise.all([
 
       const rowIndex = ((lastRowIndex - days) % 7 + 7) % 7;
 
-      grid[columnCount - 1 - weeks][rowIndex] = count;
+      grid[grid.length - 1 - weeks][rowIndex] = count;
     });
 
     return Promise.resolve(grid);
   })
+  .then(function stepGrid(grid) {
+    const newGrid     = createEmptyGrid();
+    const columnCount = newGrid.length;
+
+    // TODO: Fade out the grid nodes instead of stepping them. Leave a trail?
+    forEachNode(grid, function updateNewGrid(node, x, y) {
+      let alive = false;
+
+      if (node > 0) {
+        alive = true;
+      }
+
+      let aliveNeighbours = 0;
+
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const nx = ((x + dx) % columnCount + columnCount) % columnCount;
+          const ny = ((y + dy) % 7 + 7) % 7;
+
+          if (grid[nx][ny] > 0) {
+            aliveNeighbours++;
+          }
+        }
+      }
+
+      if (alive) {
+        if (aliveNeighbours < 2 || aliveNeighbours > 3) {
+          alive = false;
+        }
+      } else if (aliveNeighbours > 3) {
+        alive = true;
+      }
+
+      if (alive) {
+        newGrid[x][y] = 1;
+      }
+    });
+
+    return Promise.resolve(newGrid);
+  })
   .then(function makeCommits() {
-    // TODO: Read the commit state.
     // TODO: Empty the repository.
     // TODO: Then create commits for the changing game state.
     // TODO: Then create commits for any new issues (and close them).
