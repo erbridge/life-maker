@@ -113,8 +113,12 @@ const stepLife = function stepLife(repository) {
     .then(function countCommits(commits) {
       const counts = {};
 
-      commits.forEach(function incrementDate(commit) {
+      commits.forEach(function incrementCount(commit) {
         const date = commit.date();
+
+        if (date.getTime() === 0) {
+          return;
+        }
 
         date.setUTCHours(0, 0, 0, 0);
 
@@ -139,7 +143,7 @@ const stepLife = function stepLife(repository) {
       const lastRowIndex = now.day();
 
       _.each(counts, function addToGrid(count, dateString) {
-        const days = now.diff(dateString, 'days');
+        const days  = now.diff(dateString, 'days');
         const weeks = now.diff(dateString, 'weeks');
 
         const rowIndex = ((lastRowIndex - days) % 7 + 7) % 7;
@@ -234,16 +238,23 @@ getRepoInfo()
       sigs.push(sig);
     });
 
-    // TODO: Then create commits for any new issues (and close them).
+    const initialSig = NodeGit.Signature.create(name, email, 0, 0);
+
     return Promise.all([
       Promise.resolve(repository),
-      Promise.all(sigs.map(function commit(sig) {
-        // FIXME: This needs to wait for the previous commit,
-        //        and pass it in as the parent. Or use createCommitOnHead?
-        return repository.createCommit('HEAD', sig, sig, message, tree, []);
-      })),
+      repository.createCommit(
+        'HEAD', initialSig, initialSig, 'Initial commit', tree, []
+      )
+        .then(function executeCommits() {
+          return Promise.all(sigs.map(function commit(sig) {
+            // FIXME: This needs to wait for the previous commit,
+            //        and pass it in as the parent. Or use createCommitOnHead?
+            return repository.createCommit('HEAD', sig, sig, message, tree, []);
+          }));
+        }),
     ]);
   })
+  // TODO: Then create commits for any new issues (and close them).
   .then(function pushChanges(results) {
     const repository = results[0];
     // const commits    = results[1];
