@@ -221,6 +221,10 @@ getRepoInfo()
     const email   = config.get('commit.email');
     const message = config.get('commit.message');
 
+    const now = moment.utc();
+
+    now.set({ hour: 0, minute: 0, second: 0, millisecond: 0 });
+
     const sigs = [];
 
     forEachNode(grid, function createSig(node, x, y) {
@@ -228,12 +232,11 @@ getRepoInfo()
         return;
       }
 
-      // FIXME: Use x and y to specify the date.
-      const date = new Date();
+      const date = moment.utc(now);
 
-      const sig = NodeGit.Signature.create(
-        name, email, Math.round(date.getTime() / 1000), 0
-      );
+      date.set({ week: now.week() - (grid.length - 1 - x), day: y });
+
+      const sig = NodeGit.Signature.create(name, email, date.unix(), 0);
 
       sigs.push(sig);
     });
