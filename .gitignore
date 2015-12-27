@@ -1,4 +1,5 @@
 config/local*
 node_modules/
+tmp/
 
 *.sublime-workspace
