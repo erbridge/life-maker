@@ -54,12 +54,18 @@ const cloneRepo = function cloneRepo() {
       return results[0];
     })
     .then(function clone(info) {
-      return NodeGit.Clone.clone(info.clone_url, config.get('github.localPath'));
+      const options = new NodeGit.CloneOptions();
+
+      options.checkoutBranch = config.get('github.branch');
+
+      return NodeGit.Clone.clone(
+        info.clone_url, config.get('github.localPath'), options
+      );
     });
 };
 
 const stepLife = function stepLife(repository) {
-  return repository.getMasterCommit()
+  return repository.getBranchCommit(config.get('github.branch'))
     .then(function getCommits(firstCommit) {
       const commits = [];
 
