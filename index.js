@@ -2,7 +2,10 @@
 
 const config = require('./config');
 
+const path = require('path');
+
 const _        = require('lodash');
+const mkdirp   = require('mkdirp-promise');
 const moment   = require('moment');
 const NodeGit  = require('nodegit');
 const octonode = require('octonode');
@@ -13,6 +16,9 @@ const githubClient = octonode.client({
   username: config.get('github.username'),
   password: config.get('github.password'),
 });
+
+const READ_PATH  = path.join(config.get('github.localPath'), 'r');
+const WRITE_PATH = path.join(config.get('github.localPath'), 'w');
 
 const createEmptyGrid = function createEmptyGrid() {
   // FIXME: Ignore the incomplete weeks, so the world can wrap.
@@ -35,32 +41,51 @@ const forEachNode = function forEachNode(grid, eachFn) {
   }
 };
 
-const cloneRepo = function cloneRepo() {
+const getRepoInfo = function getRepoInfo() {
   const repo = githubClient.repo(config.get('github.repo'));
 
-  return Promise.all([
-    new Promise(function promiseToGetRepoInfo(resolve, reject) {
-      repo.info(function handleResponse(err, data) {
-        if (err) {
-          return reject(err);
-        }
+  return new Promise(function promiseToGetRepoInfo(resolve, reject) {
+    repo.info(function handleResponse(err, data) {
+      if (err) {
+        return reject(err);
+      }
 
-        resolve(data);
-      });
-    }),
-    rimraf(config.get('github.localPath')),
-  ])
-    .then(function handleResults(results) {
-      return results[0];
-    })
-    .then(function clone(info) {
-      const options = new NodeGit.CloneOptions();
+      resolve(data);
+    });
+  });
+};
 
-      options.checkoutBranch = config.get('github.branch');
-
+const cloneRepo = function cloneRepo(repoInfo) {
+  return rimraf(READ_PATH)
+    .then(function clone() {
       return NodeGit.Clone.clone(
-        info.clone_url, config.get('github.localPath'), options
+        repoInfo.clone_url,
+        READ_PATH,
+        {
+          checkoutBranch: config.get('github.branch'),
+        }
       );
+    });
+};
+
+const createRepo = function createRepo(repoInfo) {
+  return rimraf(WRITE_PATH)
+    .then(function createDir() {
+      return mkdirp(WRITE_PATH);
+    })
+    .then(function initRepo() {
+      return NodeGit.Repository.init(WRITE_PATH, 0);
+    })
+    .then(function addRemote(repository) {
+      return Promise.all([
+        Promise.resolve(repository),
+        NodeGit.Remote.create(repository, 'origin', repoInfo.clone_url),
+      ]);
+    })
+    .then(function resolveRepository(results) {
+      const repository = results[0];
+
+      return Promise.resolve(repository);
     });
 };
 
@@ -166,21 +191,27 @@ const stepLife = function stepLife(repository) {
     });
 };
 
-cloneRepo()
-  .then(function alterLife(repository) {
+getRepoInfo()
+  .then(function setupRepos(info) {
     return Promise.all([
-      Promise.resolve(repository),
-      stepLife(repository),
-      repository.openIndex()
-        .then(function getTree(index) {
-          return index.writeTree();
+      createRepo(info)
+        .then(function getTree(repository) {
+          return Promise.all([
+            Promise.resolve(repository),
+            repository.openIndex()
+              .then(function writeTree(index) {
+                return index.writeTree();
+              }),
+          ]);
         }),
+      cloneRepo(info)
+        .then(stepLife),
     ]);
   })
   .then(function makeCommits(results) {
-    const repository = results[0];
+    const repository = results[0][0];
+    const tree       = results[0][1];
     const grid       = results[1];
-    const tree       = results[2];
 
     const name    = config.get('commit.name');
     const email   = config.get('commit.email');
@@ -204,15 +235,36 @@ cloneRepo()
     });
 
     // TODO: Then create commits for any new issues (and close them).
-    return Promise.all(sigs.map(function commit(sig) {
-      // FIXME: This needs to wait for the previous commit,
-      //        and pass it in as the parent.
-      return repository.createCommit('new-game', sig, sig, message, tree, []);
-    }));
+    return Promise.all([
+      Promise.resolve(repository),
+      Promise.all(sigs.map(function commit(sig) {
+        // FIXME: This needs to wait for the previous commit,
+        //        and pass it in as the parent. Or use createCommitOnHead?
+        return repository.createCommit('HEAD', sig, sig, message, tree, []);
+      })),
+    ]);
   })
-  .then(function pushChanges(commits) {
-    // TODO: Then force push the changes.
-    console.log(commits);
+  .then(function pushChanges(results) {
+    const repository = results[0];
+    // const commits    = results[1];
+
+    return repository.getRemote('origin')
+      .then(function push(remote) {
+        return remote.push(
+          [
+            `+refs/heads/master:refs/heads/${config.get('github.branch')}`,
+          ],
+          {
+            callbacks: {
+              credentials: function credentials() {
+                return NodeGit.Cred.userpassPlaintextNew(
+                  config.get('github.username'), config.get('github.password')
+                );
+              },
+            },
+          }
+        );
+      });
   })
   .catch(function onReject(err) {
     winston.error(err);
