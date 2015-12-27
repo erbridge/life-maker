@@ -7,4 +7,9 @@ module.exports = {
     branch:    'game',
     localPath: 'tmp',
   },
+
+  commit: {
+    name:    'Maker of Life',
+    message: 'Create life',
+  },
 };

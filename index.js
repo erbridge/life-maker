@@ -171,15 +171,48 @@ cloneRepo()
     return Promise.all([
       Promise.resolve(repository),
       stepLife(repository),
+      repository.openIndex()
+        .then(function getTree(index) {
+          return index.writeTree();
+        }),
     ]);
   })
-  .then(function makeCommits() {
-    // TODO: Empty the repository.
-    // TODO: Then create commits for the changing game state.
-    // TODO: Then create commits for any new issues (and close them).
-    // TODO: Then force push the changes.
+  .then(function makeCommits(results) {
+    const repository = results[0];
+    const grid       = results[1];
+    const tree       = results[2];
 
-    return Promise.resolve();
+    const name    = config.get('commit.name');
+    const email   = config.get('commit.email');
+    const message = config.get('commit.message');
+
+    const sigs = [];
+
+    forEachNode(grid, function createSig(node, x, y) {
+      if (!node) {
+        return;
+      }
+
+      // FIXME: Use x and y to specify the date.
+      const date = new Date();
+
+      const sig = NodeGit.Signature.create(
+        name, email, Math.round(date.getTime() / 1000), 0
+      );
+
+      sigs.push(sig);
+    });
+
+    // TODO: Then create commits for any new issues (and close them).
+    return Promise.all(sigs.map(function commit(sig) {
+      // FIXME: This needs to wait for the previous commit,
+      //        and pass it in as the parent.
+      return repository.createCommit('new-game', sig, sig, message, tree, []);
+    }));
+  })
+  .then(function pushChanges(commits) {
+    // TODO: Then force push the changes.
+    console.log(commits);
   })
   .catch(function onReject(err) {
     winston.error(err);
