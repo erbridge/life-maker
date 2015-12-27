@@ -2,6 +2,8 @@
 
 const config = require('./config');
 
+const _        = require('lodash');
+const moment   = require('moment');
 const NodeGit  = require('nodegit');
 const octonode = require('octonode');
 const rimraf   = require('rimraf-promise');
@@ -68,8 +70,50 @@ Promise.all([
       });
     });
   })
-  .then(function groupNodes(commits) {
-    console.log(commits.length);
+  .then(function countCommits(commits) {
+    const counts = {};
+
+    commits.forEach(function incrementDate(commit) {
+      const date = commit.date();
+
+      date.setUTCHours(0, 0, 0, 0);
+
+      const dateString = date.toJSON();
+
+      if (!counts[dateString]) {
+        counts[dateString] = 0;
+      }
+
+      counts[dateString]++;
+    });
+
+    return Promise.resolve(counts);
+  })
+  .then(function createGrid(counts) {
+    const columnCount = Math.ceil(365 / 7);
+
+    const grid = [];
+
+    while (grid.length < columnCount) {
+      grid.push([]);
+    }
+
+    const now = moment.utc();
+
+    now.hours(0, 0, 0, 0);
+
+    const lastRowIndex = now.day();
+
+    _.each(counts, function addToGrid(count, dateString) {
+      const days = now.diff(dateString, 'days');
+      const weeks = now.diff(dateString, 'weeks');
+
+      const rowIndex = ((lastRowIndex - days) % 7 + 7) % 7;
+
+      grid[columnCount - 1 - weeks][rowIndex] = count;
+    });
+
+    return Promise.resolve(grid);
   })
   .then(function makeCommits() {
     // TODO: Read the commit state.
