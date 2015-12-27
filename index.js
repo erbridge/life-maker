@@ -58,33 +58,25 @@ const cloneRepo = function cloneRepo() {
     });
 };
 
-const stepLife = function stepLife(reference) {
-  return reference.head()
-    .then(function getRevWalk(head) {
-      return Promise.resolve([
-        head.target(),
-        reference.createRevWalk(head.target()),
-      ]);
-    })
-    .then(function getCommits(results) {
-      const headId  = results[0];
-      const revWalk = results[1];
+const stepLife = function stepLife(repository) {
+  return repository.getMasterCommit()
+    .then(function getCommits(firstCommit) {
+      const commits = [];
+
+      const history = firstCommit.history(NodeGit.Revwalk.SORT.Time);
 
       return new Promise(function promiseToGetCommits(resolve, reject) {
-        const commits = [];
-
-        revWalk.walk(headId, function getCommit(err, commit) {
-          // FIXME: NodeGit seems to throw an error after the last commit.
-          // if (err) {
-          //   return reject(err);
-          // }
-
-          if (!commit) {
-            return resolve(commits);
-          }
-
+        history.on('commit', function getCommit(commit) {
           commits.push(commit);
         });
+
+        history.on('error', reject);
+
+        history.on('end', function resolveCommits() {
+          resolve(commits);
+        });
+
+        history.start();
       });
     })
     .then(function countCommits(commits) {
@@ -169,8 +161,11 @@ const stepLife = function stepLife(reference) {
 };
 
 cloneRepo()
-  .then(function alterLife(reference) {
-    return stepLife(reference);
+  .then(function alterLife(repository) {
+    return Promise.all([
+      Promise.resolve(repository),
+      stepLife(repository),
+    ]);
   })
   .then(function makeCommits() {
     // TODO: Empty the repository.
