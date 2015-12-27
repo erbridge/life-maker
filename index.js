@@ -138,7 +138,7 @@ const stepLife = function stepLife(repository) {
 
       const now = moment.utc();
 
-      now.hours(0, 0, 0, 0);
+      now.set({ hour: 0, minute: 0, second: 0, millisecond: 0 });
 
       const lastRowIndex = now.day();
 
