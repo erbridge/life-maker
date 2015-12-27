@@ -9,6 +9,11 @@ const octonode = require('octonode');
 const rimraf   = require('rimraf-promise');
 const winston  = require('winston');
 
+const githubClient = octonode.client({
+  username: config.get('github.username'),
+  password: config.get('github.password'),
+});
+
 const createEmptyGrid = function createEmptyGrid() {
   // FIXME: Ignore the incomplete weeks, so the world can wrap.
   const columnCount = Math.ceil(365 / 7);
@@ -30,145 +35,142 @@ const forEachNode = function forEachNode(grid, eachFn) {
   }
 };
 
-const githubClient = octonode.client({
-  username: config.get('github.username'),
-  password: config.get('github.password'),
-});
+const cloneRepo = function cloneRepo() {
+  const repo = githubClient.repo(config.get('github.repo'));
 
-const repo = githubClient.repo(config.get('github.repo'));
-
-Promise.all([
-  new Promise(function promiseToGetRepoInfo(resolve, reject) {
-    repo.info(function handleResponse(err, data) {
-      if (err) {
-        return reject(err);
-      }
-
-      resolve(data);
-    });
-  }),
-  rimraf(config.get('github.localPath')),
-])
-  .then(function handleResults(results) {
-    return results[0];
-  })
-  .then(function cloneRepo(info) {
-    return NodeGit.Clone.clone(info.clone_url, config.get('github.localPath'));
-  })
-  .then(function getHeadId(reference) {
-    return Promise.all([
-      Promise.resolve(reference),
-      reference.head(),
-    ]);
-  })
-  .then(function getRevWalk(results) {
-    const repository = results[0];
-    const reference  = results[1];
-
-    return Promise.resolve([
-      reference.target(),
-      repository.createRevWalk(reference.target()),
-    ]);
-  })
-  .then(function getCommits(results) {
-    const headId  = results[0];
-    const revWalk = results[1];
-
-    return new Promise(function promiseToGetCommits(resolve, reject) {
-      const commits = [];
-
-      revWalk.walk(headId, function getCommit(err, commit) {
-        // FIXME: NodeGit seems to throw an error after the last commit.
-        // if (err) {
-        //   return reject(err);
-        // }
-
-        if (!commit) {
-          return resolve(commits);
+  return Promise.all([
+    new Promise(function promiseToGetRepoInfo(resolve, reject) {
+      repo.info(function handleResponse(err, data) {
+        if (err) {
+          return reject(err);
         }
 
-        commits.push(commit);
+        resolve(data);
       });
+    }),
+    rimraf(config.get('github.localPath')),
+  ])
+    .then(function handleResults(results) {
+      return results[0];
+    })
+    .then(function clone(info) {
+      return NodeGit.Clone.clone(info.clone_url, config.get('github.localPath'));
     });
-  })
-  .then(function countCommits(commits) {
-    const counts = {};
+};
 
-    commits.forEach(function incrementDate(commit) {
-      const date = commit.date();
+const stepLife = function stepLife(reference) {
+  return reference.head()
+    .then(function getRevWalk(head) {
+      return Promise.resolve([
+        head.target(),
+        reference.createRevWalk(head.target()),
+      ]);
+    })
+    .then(function getCommits(results) {
+      const headId  = results[0];
+      const revWalk = results[1];
 
-      date.setUTCHours(0, 0, 0, 0);
+      return new Promise(function promiseToGetCommits(resolve, reject) {
+        const commits = [];
 
-      const dateString = date.toJSON();
+        revWalk.walk(headId, function getCommit(err, commit) {
+          // FIXME: NodeGit seems to throw an error after the last commit.
+          // if (err) {
+          //   return reject(err);
+          // }
 
-      if (!counts[dateString]) {
-        counts[dateString] = 0;
-      }
+          if (!commit) {
+            return resolve(commits);
+          }
 
-      counts[dateString]++;
-    });
+          commits.push(commit);
+        });
+      });
+    })
+    .then(function countCommits(commits) {
+      const counts = {};
 
-    return Promise.resolve(counts);
-  })
-  .then(function createGrid(counts) {
-    const grid = createEmptyGrid();
+      commits.forEach(function incrementDate(commit) {
+        const date = commit.date();
 
-    const now = moment.utc();
+        date.setUTCHours(0, 0, 0, 0);
 
-    now.hours(0, 0, 0, 0);
+        const dateString = date.toJSON();
 
-    const lastRowIndex = now.day();
+        if (!counts[dateString]) {
+          counts[dateString] = 0;
+        }
 
-    _.each(counts, function addToGrid(count, dateString) {
-      const days = now.diff(dateString, 'days');
-      const weeks = now.diff(dateString, 'weeks');
+        counts[dateString]++;
+      });
 
-      const rowIndex = ((lastRowIndex - days) % 7 + 7) % 7;
+      return Promise.resolve(counts);
+    })
+    .then(function createGrid(counts) {
+      const grid = createEmptyGrid();
 
-      grid[grid.length - 1 - weeks][rowIndex] = count;
-    });
+      const now = moment.utc();
 
-    return Promise.resolve(grid);
-  })
-  .then(function stepGrid(grid) {
-    const newGrid     = createEmptyGrid();
-    const columnCount = newGrid.length;
+      now.hours(0, 0, 0, 0);
 
-    // TODO: Fade out the grid nodes instead of stepping them. Leave a trail?
-    forEachNode(grid, function updateNewGrid(node, x, y) {
-      let alive = false;
+      const lastRowIndex = now.day();
 
-      if (node > 0) {
-        alive = true;
-      }
+      _.each(counts, function addToGrid(count, dateString) {
+        const days = now.diff(dateString, 'days');
+        const weeks = now.diff(dateString, 'weeks');
 
-      let aliveNeighbours = 0;
+        const rowIndex = ((lastRowIndex - days) % 7 + 7) % 7;
 
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const nx = ((x + dx) % columnCount + columnCount) % columnCount;
-          const ny = ((y + dy) % 7 + 7) % 7;
+        grid[grid.length - 1 - weeks][rowIndex] = count;
+      });
 
-          if (grid[nx][ny] > 0) {
-            aliveNeighbours++;
+      return Promise.resolve(grid);
+    })
+    .then(function stepGrid(grid) {
+      const newGrid     = createEmptyGrid();
+      const columnCount = newGrid.length;
+
+      // TODO: Fade out the grid nodes instead of stepping them. Leave a trail?
+      forEachNode(grid, function updateNewGrid(node, x, y) {
+        let alive = false;
+
+        if (node > 0) {
+          alive = true;
+        }
+
+        let aliveNeighbours = 0;
+
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const nx = ((x + dx) % columnCount + columnCount) % columnCount;
+            const ny = ((y + dy) % 7 + 7) % 7;
+
+            if (grid[nx][ny] > 0) {
+              aliveNeighbours++;
+            }
           }
         }
-      }
 
-      if (alive) {
-        if (aliveNeighbours < 2 || aliveNeighbours > 3) {
-          alive = false;
+        if (alive) {
+          if (aliveNeighbours < 2 || aliveNeighbours > 3) {
+            alive = false;
+          }
+        } else if (aliveNeighbours > 3) {
+          alive = true;
         }
-      } else if (aliveNeighbours > 3) {
-        alive = true;
-      }
 
-      if (alive) {
-        newGrid[x][y] = 1;
-      }
+        if (alive) {
+          newGrid[x][y] = 1;
+        }
+      });
+
+      return Promise.resolve(newGrid);
     });
+};
 
-    return Promise.resolve(newGrid);
+cloneRepo()
+  .then(function alterLife(reference) {
+    return stepLife(reference);
   })
   .then(function makeCommits() {
     // TODO: Empty the repository.
