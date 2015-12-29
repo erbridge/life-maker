@@ -170,6 +170,36 @@ const createNewLife = function createNewLife() {
       resolve(data);
     });
   })
+    .then(function closeIssues(issues) {
+      const promises = [];
+
+      issues.forEach(function closeIssue(i) {
+        const issue = githubClient.issue(
+          config.get('github.seedRepo'),
+          i.number
+        );
+
+        promises.push(
+          new Promise(function promiseToCloseIssue(resolve, reject) {
+            issue.update(
+              { state: 'closed' },
+              function resolvePromise(err, data) {
+                if (err) {
+                  return reject(err);
+                }
+
+                resolve(data);
+              }
+            );
+          })
+        );
+      });
+
+      return Promise.all(promises)
+        .then(function resolveIssues() {
+          return Promise.resolve(issues);
+        });
+    })
     .then(function createGrid(issues) {
       const grid = createEmptyGrid();
 
