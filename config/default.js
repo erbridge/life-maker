@@ -9,6 +9,8 @@ module.exports = {
       description: 'Conway\'s Game of Life played on a torus of contributions',
     },
 
+    seedRepo: 'maker-of-life/seeds-of-life',
+
     localPath: 'tmp',
   },
 

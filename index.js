@@ -4,7 +4,6 @@ const config = require('./config');
 
 const path = require('path');
 
-const _        = require('lodash');
 const moment   = require('moment');
 const NodeGit  = require('nodegit');
 const octonode = require('octonode');
@@ -22,6 +21,14 @@ const WRITE_PATH = path.join(config.get('github.localPath'), 'w');
 const REMOTE_FULL_NAME =
   `${config.get('github.username')}/${config.get('github.repo.name')}`;
 
+const getNow = function getNow() {
+  const now = moment.utc();
+
+  now.set({ hour: 0, minute: 0, second: 0, millisecond: 0 });
+
+  return now;
+};
+
 const createEmptyGrid = function createEmptyGrid() {
   // FIXME: Ignore the incomplete weeks, so the world can wrap.
   const columnCount = Math.ceil(365 / 7);
@@ -33,6 +40,28 @@ const createEmptyGrid = function createEmptyGrid() {
   }
 
   return grid;
+};
+
+const addDatesToGrid = function addDatesToGrid(dateStrings, grid, utcNow) {
+  dateStrings.forEach(function addDate(dateString) {
+    if (!dateString) {
+      return;
+    }
+
+    const date = new Date(dateString);
+
+    const days  = utcNow.diff(date, 'days');
+    const weeks = utcNow.diff(date, 'weeks');
+
+    const colIndex = grid.length - 1 - weeks;
+    const rowIndex = ((utcNow.day() - days) % 7 + 7) % 7;
+
+    if (colIndex < 0) {
+      return;
+    }
+
+    grid[colIndex][rowIndex] = 1;
+  });
 };
 
 const forEachNode = function forEachNode(grid, eachFn) {
@@ -128,7 +157,36 @@ const recreateWriteRepo = function recreateWriteRepo(repoInfo) {
     });
 };
 
-const stepLife = function stepLife() {
+const createNewLife = function createNewLife() {
+  const repo = githubClient.repo(config.get('github.seedRepo'));
+
+  return new Promise(function promiseToGetIssues(resolve, reject) {
+    // TODO: Get comments too.
+    repo.issues({ state: 'open' }, function handleResponse(err, data) {
+      if (err) {
+        return reject(err);
+      }
+
+      resolve(data);
+    });
+  })
+    .then(function createGrid(issues) {
+      const grid = createEmptyGrid();
+
+      const now = getNow();
+
+      // TODO: Close processed issues.
+      issues.forEach(function addToGrid(issue) {
+        const dateStrings = issue.body.split('\n');
+
+        addDatesToGrid(dateStrings, grid, now);
+      });
+
+      return Promise.resolve(grid);
+    });
+};
+
+const updateOldLife = function updateOldLife(newGrid) {
   return NodeGit.Repository.open(READ_PATH)
     .then(function getHeadCommit(repository) {
       return repository.getHeadCommit();
@@ -182,29 +240,15 @@ const stepLife = function stepLife() {
     .then(function createGrid(counts) {
       const grid = createEmptyGrid();
 
-      const now = moment.utc();
-
-      now.set({ hour: 0, minute: 0, second: 0, millisecond: 0 });
-
-      const lastRowIndex = now.day();
-
-      _.each(counts, function addToGrid(count, dateString) {
-        const days  = now.diff(dateString, 'days');
-        const weeks = now.diff(dateString, 'weeks');
-
-        const rowIndex = ((lastRowIndex - days) % 7 + 7) % 7;
-
-        grid[grid.length - 1 - weeks][rowIndex] = count;
-      });
+      addDatesToGrid(Object.keys(counts), grid, getNow());
 
       return Promise.resolve(grid);
     })
-    .then(function stepGrid(grid) {
-      const newGrid     = createEmptyGrid();
+    .then(function stepGrid(oldGrid) {
       const columnCount = newGrid.length;
 
       // TODO: Fade out the grid nodes instead of stepping them. Leave a trail?
-      forEachNode(grid, function updateNewGrid(node, x, y) {
+      forEachNode(oldGrid, function updateNewGrid(node, x, y) {
         let alive = false;
 
         if (node > 0) {
@@ -218,7 +262,7 @@ const stepLife = function stepLife() {
             const nx = ((x + dx) % columnCount + columnCount) % columnCount;
             const ny = ((y + dy) % 7 + 7) % 7;
 
-            if (grid[nx][ny] > 0) {
+            if (oldGrid[nx][ny] > 0) {
               aliveNeighbours++;
             }
           }
@@ -248,9 +292,7 @@ const commitLife = function commitLife(lifeGrid) {
 
   return NodeGit.Repository.open(WRITE_PATH)
     .then(function makeCommits(repository) {
-      const now = moment.utc();
-
-      now.set({ hour: 0, minute: 0, second: 0, millisecond: 0 });
+      const now = getNow();
 
       const sigs = [];
 
@@ -320,8 +362,8 @@ getRemoteRepoInfo()
   .then(recreateReadRepo)
   .then(recreateRemoteRepo)
   .then(recreateWriteRepo)
-  .then(stepLife)
-  // TODO: Then add life for any new issues (and close them).
+  .then(createNewLife)
+  .then(updateOldLife)
   .then(commitLife)
   .then(updateRemoteRepo)
   .catch(function onReject(err) {
