@@ -6,6 +6,7 @@ const path = require('path');
 
 const moment   = require('moment');
 const NodeGit  = require('nodegit');
+const schedule = require('node-schedule');
 const octonode = require('octonode');
 const rimraf   = require('rimraf-promise');
 const winston  = require('winston');
@@ -392,14 +393,23 @@ const updateRemoteRepo = function updateRemoteRepo() {
     });
 };
 
-getRemoteRepoInfo()
-  .then(recreateReadRepo)
-  .then(recreateRemoteRepo)
-  .then(recreateWriteRepo)
-  .then(createNewLife)
-  .then(updateOldLife)
-  .then(commitLife)
-  .then(updateRemoteRepo)
-  .catch(function onReject(err) {
-    winston.error(err);
-  });
+const stepLife = function stepLife() {
+  return getRemoteRepoInfo()
+    .then(recreateReadRepo)
+    .then(recreateRemoteRepo)
+    .then(recreateWriteRepo)
+    .then(createNewLife)
+    .then(updateOldLife)
+    .then(commitLife)
+    .then(updateRemoteRepo);
+};
+
+schedule.scheduleJob({ minute: [ 15, 45 ] }, function executeStep() {
+  stepLife()
+    .then(function onResolve() {
+      winston.info('Completed life step');
+    })
+    .catch(function onReject(err) {
+      winston.error(err);
+    });
+});
