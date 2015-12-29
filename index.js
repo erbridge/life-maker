@@ -272,7 +272,7 @@ const updateOldLife = function updateOldLife(newGrid) {
           if (aliveNeighbours < 2 || aliveNeighbours > 3) {
             alive = false;
           }
-        } else if (aliveNeighbours > 3) {
+        } else if (aliveNeighbours === 3) {
           alive = true;
         }
 
