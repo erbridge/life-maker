@@ -48,13 +48,13 @@ const addDatesToGrid = function addDatesToGrid(dateStrings, grid, utcNow) {
       return;
     }
 
-    const date = new Date(dateString);
+    const date = moment(new Date(dateString));
 
     const days  = utcNow.diff(date, 'days');
-    const weeks = utcNow.diff(date, 'weeks');
+    const weeks = Math.ceil((days - utcNow.day()) / 7);
 
     const colIndex = grid.length - 1 - weeks;
-    const rowIndex = ((utcNow.day() - days) % 7 + 7) % 7;
+    const rowIndex = date.day();
 
     if (colIndex < 0) {
       return;
