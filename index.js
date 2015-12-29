@@ -289,6 +289,10 @@ const updateOldLife = function updateOldLife(newGrid) {
 
         for (let dx = -1; dx <= 1; dx++) {
           for (let dy = -1; dy <= 1; dy++) {
+            if (!dx && !dy) {
+              continue;
+            }
+
             const nx = ((x + dx) % columnCount + columnCount) % columnCount;
             const ny = ((y + dy) % 7 + 7) % 7;
 
