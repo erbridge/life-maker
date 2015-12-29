@@ -5,7 +5,6 @@ const config = require('./config');
 const path = require('path');
 
 const _        = require('lodash');
-const mkdirp   = require('mkdirp-promise');
 const moment   = require('moment');
 const NodeGit  = require('nodegit');
 const octonode = require('octonode');
@@ -19,6 +18,9 @@ const githubClient = octonode.client({
 
 const READ_PATH  = path.join(config.get('github.localPath'), 'r');
 const WRITE_PATH = path.join(config.get('github.localPath'), 'w');
+
+const REMOTE_FULL_NAME =
+  `${config.get('github.username')}/${config.get('github.repo.name')}`;
 
 const createEmptyGrid = function createEmptyGrid() {
   // FIXME: Ignore the incomplete weeks, so the world can wrap.
@@ -41,10 +43,10 @@ const forEachNode = function forEachNode(grid, eachFn) {
   }
 };
 
-const getRepoInfo = function getRepoInfo() {
-  const repo = githubClient.repo(config.get('github.repo'));
+const getRemoteRepoInfo = function getRemoteRepoInfo() {
+  const repo = githubClient.repo(REMOTE_FULL_NAME);
 
-  return new Promise(function promiseToGetRepoInfo(resolve, reject) {
+  return new Promise(function promiseToGetRemoteRepoInfo(resolve, reject) {
     repo.info(function handleResponse(err, data) {
       if (err) {
         return reject(err);
@@ -55,44 +57,88 @@ const getRepoInfo = function getRepoInfo() {
   });
 };
 
-const cloneRepo = function cloneRepo(repoInfo) {
-  return rimraf(READ_PATH)
+const cloneRemoteRepo = function cloneRemoteRepo(repoInfo, localPath) {
+  return rimraf(localPath)
     .then(function clone() {
       return NodeGit.Clone.clone(
         repoInfo.clone_url,
-        READ_PATH,
-        {
-          checkoutBranch: config.get('github.branch'),
-        }
+        localPath
       );
     });
 };
 
-const createRepo = function createRepo(repoInfo) {
-  return rimraf(WRITE_PATH)
-    .then(function createDir() {
-      return mkdirp(WRITE_PATH);
-    })
-    .then(function initRepo() {
-      return NodeGit.Repository.init(WRITE_PATH, 0);
-    })
-    .then(function addRemote(repository) {
-      return Promise.all([
-        Promise.resolve(repository),
-        NodeGit.Remote.create(repository, 'origin', repoInfo.clone_url),
-      ]);
-    })
-    .then(function resolveRepository(results) {
-      const repository = results[0];
-
-      return Promise.resolve(repository);
+const recreateReadRepo = function recreateReadRepo(repoInfo) {
+  return cloneRemoteRepo(repoInfo, READ_PATH)
+    .then(function resolveInfo() {
+      return Promise.resolve(repoInfo);
     });
 };
 
-const stepLife = function stepLife(repository) {
-  return repository.getBranchCommit(config.get('github.branch'))
+const recreateRemoteRepo = function recreateRemoteRepo() {
+  const me   = githubClient.me();
+  const repo = githubClient.repo(REMOTE_FULL_NAME);
+
+  return new Promise(function promiseToDestroyRemoteRepo(resolve, reject) {
+    repo.destroy(function catchError(err) {
+      if (err) {
+        return reject(err);
+      }
+
+      resolve();
+    });
+  })
+    .then(function createRemoteRepo() {
+      return new Promise(function promiseToCreateRemoteRepo(resolve, reject) {
+        me.repo(
+          {
+            name:        config.get('github.repo.name'),
+            description: config.get('github.repo.description'),
+          },
+          function handleResponse(err, data) {
+            if (err) {
+              return reject(err);
+            }
+
+            resolve(data);
+          }
+        );
+      });
+    });
+};
+
+const recreateWriteRepo = function recreateWriteRepo(repoInfo) {
+  return cloneRemoteRepo(repoInfo, WRITE_PATH)
+    .then(function createInitialCommit(repository) {
+      const sig = NodeGit.Signature.create(
+        config.get('commit.name'), config.get('commit.email'), 0, 0
+      );
+
+      return repository.openIndex()
+        .then(function writeTree(index) {
+          return index.writeTree();
+        })
+        .then(function createCommit(tree) {
+          return repository.createCommit(
+            'HEAD', sig, sig, 'Initial commit', tree, []
+          );
+        });
+    })
+    .then(function resolveInfo() {
+      return Promise.resolve(repoInfo);
+    });
+};
+
+const stepLife = function stepLife() {
+  return NodeGit.Repository.open(READ_PATH)
+    .then(function getHeadCommit(repository) {
+      return repository.getHeadCommit();
+    })
     .then(function getCommits(firstCommit) {
       const commits = [];
+
+      if (!firstCommit) {
+        return Promise.resolve(commits);
+      }
 
       const history = firstCommit.history(NodeGit.Revwalk.SORT.Time);
 
@@ -195,102 +241,89 @@ const stepLife = function stepLife(repository) {
     });
 };
 
-getRepoInfo()
-  .then(function setupRepos(info) {
-    return Promise.all([
-      createRepo(info)
-        .then(function getTree(repository) {
-          return Promise.all([
-            Promise.resolve(repository),
-            repository.openIndex()
-              .then(function writeTree(index) {
-                return index.writeTree();
-              }),
-          ]);
-        }),
-      cloneRepo(info)
-        .then(stepLife),
-    ]);
-  })
-  .then(function makeCommits(results) {
-    const repository = results[0][0];
-    const tree       = results[0][1];
-    const grid       = results[1];
+const commitLife = function commitLife(lifeGrid) {
+  const name    = config.get('commit.name');
+  const email   = config.get('commit.email');
+  const message = config.get('commit.message');
 
-    const name    = config.get('commit.name');
-    const email   = config.get('commit.email');
-    const message = config.get('commit.message');
+  return NodeGit.Repository.open(WRITE_PATH)
+    .then(function makeCommits(repository) {
+      const now = moment.utc();
 
-    const now = moment.utc();
+      now.set({ hour: 0, minute: 0, second: 0, millisecond: 0 });
 
-    now.set({ hour: 0, minute: 0, second: 0, millisecond: 0 });
+      const sigs = [];
 
-    const sigs = [];
+      forEachNode(lifeGrid, function createSig(node, x, y) {
+        if (!node) {
+          return;
+        }
 
-    forEachNode(grid, function createSig(node, x, y) {
-      if (!node) {
-        return;
+        const date = moment.utc(now);
+
+        date.set({ week: now.week() - (lifeGrid.length - 1 - x), day: y });
+
+        const sig = NodeGit.Signature.create(name, email, date.unix(), 0);
+
+        sigs.push(sig);
+      });
+
+      if (!sigs.length) {
+        return Promise.resolve();
       }
 
-      const date = moment.utc(now);
+      const executeCommit = function executeCommit(i) {
+        const sig = sigs[i];
 
-      date.set({ week: now.week() - (grid.length - 1 - x), day: y });
+        return repository.createCommitOnHead([], sig, sig, message)
+          .then(function recurse() {
+            i++;
 
-      const sig = NodeGit.Signature.create(name, email, date.unix(), 0);
+            if (sigs.length > i) {
+              return executeCommit(i);
+            }
 
-      sigs.push(sig);
+            return Promise.resolve();
+          });
+      };
+
+      return executeCommit(0);
     });
+};
 
-    const initialSig = NodeGit.Signature.create(name, email, 0, 0);
+const updateRemoteRepo = function updateRemoteRepo() {
+  const cred = NodeGit.Cred.userpassPlaintextNew(
+    config.get('github.username'), config.get('github.password')
+  );
 
-    const executeCommit = function executeCommit(i) {
-      const sig = sigs[i];
-
-      return repository.createCommitOnHead([], sig, sig, message)
-        .then(function recurse() {
-          i++;
-
-          if (sigs.length > i) {
-            return executeCommit(i);
-          }
-
-          return Promise.resolve();
-        });
-    };
-
-    return Promise.all([
-      Promise.resolve(repository),
-      repository.createCommit(
-        'HEAD', initialSig, initialSig, 'Initial commit', tree, []
-      )
-        .then(function executeCommits() {
-          return executeCommit(0);
-        }),
-    ]);
-  })
-  // TODO: Then create commits for any new issues (and close them).
-  .then(function pushChanges(results) {
-    const repository = results[0];
-    // const commits    = results[1];
-
-    return repository.getRemote('origin')
-      .then(function push(remote) {
-        return remote.push(
-          [
-            `+refs/heads/master:refs/heads/${config.get('github.branch')}`,
-          ],
-          {
-            callbacks: {
-              credentials: function credentials() {
-                return NodeGit.Cred.userpassPlaintextNew(
-                  config.get('github.username'), config.get('github.password')
-                );
-              },
+  return NodeGit.Repository.open(WRITE_PATH)
+    .then(function getRemote(repository) {
+      return repository.getRemote('origin');
+    })
+    .then(function push(remote) {
+      return remote.push(
+        [
+          '+HEAD:refs/heads/master',
+        ],
+        {
+          callbacks: {
+            credentials: function credentials() {
+              return cred;
             },
-          }
-        );
-      });
-  })
+          },
+        }
+      );
+    });
+};
+
+getRemoteRepoInfo()
+  .then(recreateReadRepo)
+  .then(recreateRemoteRepo)
+  .then(recreateWriteRepo)
+  .then(stepLife)
+  // TODO: Then add life for any new issues (and close them).
+  .then(commitLife)
+  .then(updateRemoteRepo)
   .catch(function onReject(err) {
     winston.error(err);
   });
