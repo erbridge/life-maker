@@ -1,2 +1,2 @@
-https://launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test/+files/gcc-4.9_4.9.3-8ubuntu2~14.04_amd64.deb
-https://launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test/+files/libstdc++6-4.9-dbg_4.9.3-8ubuntu2~14.04_amd64.deb
+http://mirrors.kernel.org/ubuntu/pool/main/g/gcc-4.9/gcc-4.9_4.9.2-10ubuntu13_amd64.deb
+http://mirrors.kernel.org/ubuntu/pool/main/g/gcc-4.9/libstdc%2b%2b6_4.9.2-10ubuntu13_amd64.deb
