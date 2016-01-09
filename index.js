@@ -368,12 +368,14 @@ const commitLife = function commitLife(lifeGrid) {
     });
 };
 
-const updateRemoteRepo = function updateRemoteRepo() {
+const updateRemoteRepo = function updateRemoteRepo(repoPath) {
+  repoPath = repoPath || WRITE_PATH;
+
   const cred = NodeGit.Cred.userpassPlaintextNew(
     config.get('github.username'), config.get('github.password')
   );
 
-  return NodeGit.Repository.open(WRITE_PATH)
+  return NodeGit.Repository.open(repoPath)
     .then(function getRemote(repository) {
       return repository.getRemote('origin');
     })
@@ -411,5 +413,7 @@ schedule.scheduleJob({ minute: [ 15, 45 ] }, function executeStep() {
     })
     .catch(function onReject(err) {
       winston.error(err);
+
+      return updateRemoteRepo(READ_PATH);
     });
 });
